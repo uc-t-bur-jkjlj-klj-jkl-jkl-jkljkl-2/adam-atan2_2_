@@ -15,7 +15,7 @@ pip install adam_atan2
 from adam_atan2 import AdamATan2
 
 # All supported arguments are listed below
-optim = BF16FusedAdamW(model.parameters(),
+optim = AdamATan2(model.parameters(),
     lr=1e-3,
     weight_decay=0.1,
     betas=(0.9, 0.95)

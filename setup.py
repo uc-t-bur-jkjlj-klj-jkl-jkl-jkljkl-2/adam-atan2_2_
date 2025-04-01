@@ -6,7 +6,6 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Supported NVIDIA GPU architectures.
 # TODO(one): Needs testing on consumer GPUs.
-# BF16 requires compute cap >= SM80
 NVIDIA_SUPPORTED_ARCHS = {"80", "86", "89", "90"}
 
 # Compiler flags.

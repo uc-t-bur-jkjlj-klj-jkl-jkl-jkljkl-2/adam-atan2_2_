@@ -59,7 +59,7 @@ __device__ __forceinline__ void adam_math(
     }
 }
 
-template <typename scalar_type, typename opmath_t>
+template <typename scalar_type>
 struct FusedAdamMathFunctor {
   using opmath_t = at::opmath_type<scalar_type>;
   __device__ __forceinline__ void operator()(
@@ -158,7 +158,7 @@ void adam_atan2_cuda_impl_(
         at::native::multi_tensor_apply_for_fused_optimizer<kArgsDepth>(
             tensor_lists,
             state_steps,
-            FusedAdamMathFunctor(),
+            FusedAdamMathFunctor<scalar_t>(),
             lr,
             beta1,
             beta2,

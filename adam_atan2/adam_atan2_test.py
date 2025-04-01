@@ -22,10 +22,11 @@ def _adam_atan2_reference_impl(
     orig_dtype = param.dtype
 
     # Cast to math type, fp32.
-    param = param.to(torch.float32)
-    grad = grad.to(torch.float32)
-    exp_avg = exp_avg.to(torch.float32)
-    exp_avg_sq = exp_avg_sq.to(torch.float32)
+    if orig_dtype != torch.float64:
+        param = param.to(torch.float32)
+        grad = grad.to(torch.float32)
+        exp_avg = exp_avg.to(torch.float32)
+        exp_avg_sq = exp_avg_sq.to(torch.float32)
 
     # Math
     # Reference implementation (PyTorch):
@@ -36,14 +37,14 @@ def _adam_atan2_reference_impl(
     exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
 
     denom = exp_avg_sq.sqrt() / bias_correction2_sqrt
-    param.add_(torch.atan2(exp_avg, denom), value=-step_size)
+    param.add_(torch.atan2(exp_avg, denom), alpha=-step_size)
 
     return param.to(orig_dtype), exp_avg.to(orig_dtype), exp_avg_sq.to(orig_dtype)
 
 
 @pytest.mark.parametrize("params_shape", [(1, ), (4096, ), (4096, 14336)])
 @pytest.mark.parametrize("lr", [1e-3, 1e-4, 5e-4])
-@pytest.mark.parametrize("dtype", [torch.float32])
+@pytest.mark.parametrize("dtype", [torch.float64, torch.float32, torch.float16, torch.bfloat16])
 def test_adam_atan2_backend(
     params_shape,
     lr,
@@ -53,8 +54,8 @@ def test_adam_atan2_backend(
     beta2=0.95,
     init_std=0.02,
     grad_std=0.001,
-    atol=0.0002,
-    steps=100
+    steps=100,
+    atol={torch.float64: 1e-15, torch.float32: 1e-6, torch.float16: 0.002, torch.bfloat16: 0.005},
 ):
     torch.random.manual_seed(0)
 
@@ -101,7 +102,7 @@ def test_adam_atan2_backend(
         )
 
     # Check
-    assert torch.allclose(test_param, ref_param, rtol=0, atol=atol)
-    assert torch.allclose(test_exp_avg, ref_exp_avg, rtol=0, atol=atol)
-    assert torch.allclose(test_exp_avg_sq, ref_exp_avg_sq, rtol=0, atol=atol)
+    assert torch.allclose(test_param, ref_param, rtol=0, atol=atol[dtype])
+    assert torch.allclose(test_exp_avg, ref_exp_avg, rtol=0, atol=atol[dtype])
+    assert torch.allclose(test_exp_avg_sq, ref_exp_avg_sq, rtol=0, atol=atol[dtype])
     assert test_steps.item() == ref_steps
