@@ -8,7 +8,7 @@ Drop-in replacement of `torch.optim.AdamW`.
  - Doesn't support `amsgrad`, `maximize`, `capturable`, `differentiable` argument yet
 
 ```bash
-pip install adam_atan2
+pip install adam-atan2
 ```
 
 ```python
