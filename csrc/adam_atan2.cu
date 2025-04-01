@@ -32,6 +32,7 @@ __device__ __forceinline__ void adam_math(
     const opmath_t &wd_alpha,
     const opmath_t &mbeta1,
     const opmath_t &mbeta2,
+    const opmath_t &bias_correction1_reciprocal,
     const opmath_t &bias_correction2_sqrt)
 {
 #pragma unroll
@@ -50,7 +51,7 @@ __device__ __forceinline__ void adam_math(
         exp_avg_sq = lerp(exp_avg_sq, grad * grad, mbeta2);
 
         const opmath_t denom = std::sqrt(exp_avg_sq) / bias_correction2_sqrt;
-        param -= step_size * std::atan2(exp_avg, denom);
+        param -= step_size * std::atan2(bias_correction1_reciprocal * exp_avg, denom);
 
         // Store results.
         r_args[kParamIdx][ii] = param;
@@ -72,16 +73,16 @@ struct FusedAdamMathFunctor {
     const auto tensor_loc = tl.block_to_tensor[blockIdx.x];
     const auto chunk_idx = tl.block_to_chunk[blockIdx.x];
 
-    const auto [step_size, wd_alpha, bias_correction2_sqrt, mbeta1, mbeta2] = [&]() -> std::tuple<opmath_t, opmath_t, opmath_t, opmath_t, opmath_t> {
+    const auto [step_size, wd_alpha, bias_correction1_reciprocal, bias_correction2_sqrt, mbeta1, mbeta2] = [&]() -> std::tuple<opmath_t, opmath_t, opmath_t, opmath_t, opmath_t, opmath_t> {
       auto* step_count = reinterpret_cast<const float*>(tl.state_steps_addresses[tensor_loc]);
       const auto bias_correction1 = 1 - at::native::pow_(beta1, *step_count);
       const auto bias_correction2 = 1 - at::native::pow_(beta2, *step_count);
-      const auto bias_correction2_sqrt = std::sqrt(bias_correction2);
 
       return {
-        static_cast<opmath_t>(lr / bias_correction1),
+        static_cast<opmath_t>(lr),
         static_cast<opmath_t>(1 - lr * weight_decay),
-        static_cast<opmath_t>(bias_correction2_sqrt),
+        static_cast<opmath_t>(1 / bias_correction1),
+        static_cast<opmath_t>(std::sqrt(bias_correction2)),
         static_cast<opmath_t>(1 - beta1),
         static_cast<opmath_t>(1 - beta2)
       };
@@ -107,6 +108,7 @@ struct FusedAdamMathFunctor {
             wd_alpha,
             mbeta1,
             mbeta2,
+            bias_correction1_reciprocal,
             bias_correction2_sqrt);
 #pragma unroll
         for (int i = 0; i < kArgsDepth; i++) {
@@ -125,6 +127,7 @@ struct FusedAdamMathFunctor {
             wd_alpha,
             mbeta1,
             mbeta2,
+            bias_correction1_reciprocal,
             bias_correction2_sqrt);
 #pragma unroll
         for (int i = 0; i < kArgsDepth; i++) {
