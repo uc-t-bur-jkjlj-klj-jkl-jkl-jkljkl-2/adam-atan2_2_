@@ -30,8 +30,8 @@ try:
     
     ext_modules = [
         CUDAExtension(
-            "bf16_fused_adam_backend",
-            ["csrc/ops.cu", "csrc/bf16_fused_adam.cu"],
+            "adam_atan2_backend",
+            ["csrc/ops.cu", "csrc/adam_atan2.cu"],
             include_dirs=[
                 f"{ROOT_DIR}/csrc"
             ],
@@ -48,13 +48,13 @@ except ImportError as e:
 
 
 setuptools.setup(
-    name="bf16_fused_adam",
+    name="adam_atan2",
     author="One",
     author_email="imonenext@gmail.com",
-    description="BFloat16 Fused Adam Optimizer",
+    description="Adam-atan2 Fused Optimizer",
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    url="https://github.com/imoneoi/bf16_fused_adam",
+    url="https://github.com/imoneoi/adam_atan2",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: Apache Software License",

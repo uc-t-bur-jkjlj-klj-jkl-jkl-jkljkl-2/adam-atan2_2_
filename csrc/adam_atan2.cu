@@ -1,4 +1,4 @@
-#include "bf16_fused_adam.h"
+#include "adam_atan2.h"
 
 #include <ATen/core/Tensor.h>
 #include <ATen/native/cuda/ForeachFunctors.cuh>
@@ -7,18 +7,16 @@
 #include <utility>
 
 
-namespace bf16_fused_adam {
+namespace adam_atan2 {
 
-using bfloat16_t = at::BFloat16;
 using at::native::kILP;
 
-constexpr int kArgsDepth = 5;
+constexpr int kArgsDepth = 4;
 
 constexpr uint8_t kParamIdx = 0;
-constexpr uint8_t kMantissaIdx = 1;
-constexpr uint8_t kGradIdx = 2;
-constexpr uint8_t kExpAvgIdx = 3;
-constexpr uint8_t kExpAvgSqIdx = 4;
+constexpr uint8_t kGradIdx = 1;
+constexpr uint8_t kExpAvgIdx = 2;
+constexpr uint8_t kExpAvgSqIdx = 3;
 
 template <typename T>
 __device__ __forceinline__ T lerp(const T v0, const T v1, const T t) {
@@ -27,80 +25,70 @@ __device__ __forceinline__ T lerp(const T v0, const T v1, const T t) {
     return fma(t, v1, fma(-t, v0, v0));
 }
 
-__device__ __forceinline__ float concat_float(const bfloat16_t value, const bfloat16_t mantissa) {
-    return __uint_as_float((static_cast<uint32_t>(value.x) << 16) | static_cast<uint32_t>(mantissa.x));
-}
-
-__device__ __forceinline__ void split_float(const float f, bfloat16_t &value, bfloat16_t &mantissa) {
-    value.x = static_cast<uint16_t>(__float_as_uint(f) >> 16);
-    mantissa.x = static_cast<uint16_t>(__float_as_uint(f));
-}
-
-__device__ __forceinline__ void adamw_math(
-    bfloat16_t r_args[kArgsDepth][kILP],
-    const float &step_size,
-    const float &wd_alpha,
-    const float &mbeta1,
-    const float &mbeta2,
-    const float &eps,
-    const float &bias_correction2_sqrt)
+template <typename scalar_type, typename opmath_t>
+__device__ __forceinline__ void adam_math(
+    scalar_type r_args[kArgsDepth][kILP],
+    const opmath_t &step_size,
+    const opmath_t &wd_alpha,
+    const opmath_t &mbeta1,
+    const opmath_t &mbeta2,
+    const opmath_t &bias_correction2_sqrt)
 {
 #pragma unroll
     for (int ii = 0; ii < kILP; ii++)
     {
         // Load values.
-        float param = concat_float(r_args[kParamIdx][ii], r_args[kMantissaIdx][ii]);
+        opmath_t param = static_cast<opmath_t>(r_args[kParamIdx][ii]);
+        const opmath_t grad = static_cast<opmath_t>(r_args[kGradIdx][ii]);
 
-        const float grad = static_cast<float>(r_args[kGradIdx][ii]);
-
-        float exp_avg = static_cast<float>(r_args[kExpAvgIdx][ii]);
-        float exp_avg_sq = static_cast<float>(r_args[kExpAvgSqIdx][ii]);
+        opmath_t exp_avg = static_cast<opmath_t>(r_args[kExpAvgIdx][ii]);
+        opmath_t exp_avg_sq = static_cast<opmath_t>(r_args[kExpAvgSqIdx][ii]);
 
         param *= wd_alpha;
 
         exp_avg = lerp(exp_avg, grad, mbeta1);
         exp_avg_sq = lerp(exp_avg_sq, grad * grad, mbeta2);
 
-        const float denom = (std::sqrt(exp_avg_sq) / bias_correction2_sqrt) + eps;
-        param -= step_size * exp_avg / denom;
+        const opmath_t denom = std::sqrt(exp_avg_sq) / bias_correction2_sqrt;
+        param -= step_size * std::atan2(exp_avg, denom);
 
         // Store results.
-        split_float(param, r_args[kParamIdx][ii], r_args[kMantissaIdx][ii]);
+        r_args[kParamIdx][ii] = param;
         r_args[kExpAvgIdx][ii] = exp_avg;
         r_args[kExpAvgSqIdx][ii] = exp_avg_sq;
     }
 }
 
+template <typename scalar_type, typename opmath_t>
 struct FusedAdamMathFunctor {
+  using opmath_t = at::opmath_type<scalar_type>;
   __device__ __forceinline__ void operator()(
       int chunk_size,
       at::native::FusedOptimizerTensorListMetadata<kArgsDepth>& tl,
       const double& lr,
       const double& beta1,
       const double& beta2,
-      const double& weight_decay,
-      const double& eps) {
+      const double& weight_decay) {
     const auto tensor_loc = tl.block_to_tensor[blockIdx.x];
     const auto chunk_idx = tl.block_to_chunk[blockIdx.x];
 
-    const auto [step_size, wd_alpha, bias_correction2_sqrt, mbeta1, mbeta2, meps] = [&]() -> std::tuple<float, float, float, float, float, float> {
+    const auto [step_size, wd_alpha, bias_correction2_sqrt, mbeta1, mbeta2] = [&]() -> std::tuple<opmath_t, opmath_t, opmath_t, opmath_t, opmath_t> {
       auto* step_count = reinterpret_cast<const float*>(tl.state_steps_addresses[tensor_loc]);
       const auto bias_correction1 = 1 - at::native::pow_(beta1, *step_count);
       const auto bias_correction2 = 1 - at::native::pow_(beta2, *step_count);
       const auto bias_correction2_sqrt = std::sqrt(bias_correction2);
 
       return {
-        __double2float_rn(lr / bias_correction1),
-        __double2float_rn(1 - lr * weight_decay),
-        __double2float_rn(bias_correction2_sqrt),
-        __double2float_rn(1 - beta1),
-        __double2float_rn(1 - beta2),
-        __double2float_rn(eps)
+        static_cast<opmath_t>(lr / bias_correction1),
+        static_cast<opmath_t>(1 - lr * weight_decay),
+        static_cast<opmath_t>(bias_correction2_sqrt),
+        static_cast<opmath_t>(1 - beta1),
+        static_cast<opmath_t>(1 - beta2)
       };
     }();
 
-    bfloat16_t* args[kArgsDepth];
-    bfloat16_t r_args[kArgsDepth][kILP];
+    scalar_type* args[kArgsDepth];
+    scalar_type r_args[kArgsDepth][kILP];
     const auto n = tl.numel_for_tensor[tensor_loc] - chunk_idx * chunk_size;
 
     const bool all_aligned{
@@ -113,13 +101,12 @@ struct FusedAdamMathFunctor {
         for (int i = 0; i < kArgsDepth; i++) {
           at::native::load_store(r_args[i], args[i], 0, i_start);
         }
-        adamw_math(
+        adam_math(
             r_args,
             step_size,
             wd_alpha,
             mbeta1,
             mbeta2,
-            meps,
             bias_correction2_sqrt);
 #pragma unroll
         for (int i = 0; i < kArgsDepth; i++) {
@@ -132,13 +119,12 @@ struct FusedAdamMathFunctor {
       for (int64_t i_start = 0; i_start < n && i_start < chunk_size;
            i_start += blockDim.x * kILP) {
         at::native::load_args<kArgsDepth>(r_args, args, i_start, chunk_size, n);
-        adamw_math(
+        adam_math(
             r_args,
             step_size,
             wd_alpha,
             mbeta1,
             mbeta2,
-            meps,
             bias_correction2_sqrt);
 #pragma unroll
         for (int i = 0; i < kArgsDepth; i++) {
@@ -151,9 +137,8 @@ struct FusedAdamMathFunctor {
   }
 };
 
-void bf16_fused_adamw_cuda_impl_(
+void adam_atan2_cuda_impl_(
     std::vector<at::Tensor> params,
-    std::vector<at::Tensor> mantissas,
     std::vector<at::Tensor> grads,
     std::vector<at::Tensor> exp_avgs,
     std::vector<at::Tensor> exp_avg_sqs,
@@ -161,25 +146,24 @@ void bf16_fused_adamw_cuda_impl_(
     const double lr,
     const double beta1,
     const double beta2,
-    const double weight_decay,
-    const double eps) {
-  std::vector<std::vector<at::Tensor>> tensor_lists{params, mantissas, grads, exp_avgs, exp_avg_sqs};
+    const double weight_decay) {
+  std::vector<std::vector<at::Tensor>> tensor_lists{params, grads, exp_avgs, exp_avg_sqs};
 
-  AT_DISPATCH_FLOATING_TYPES_AND(
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::ScalarType::Half,
       at::ScalarType::BFloat16,
       params[0].scalar_type(),
-      "bf16_fused_adamw_kernel_cuda",
+      "adam_atan2_kernel_cuda",
       [&]() {
-        at::native::multi_tensor_apply_for_fused_optimizer<5>(
+        at::native::multi_tensor_apply_for_fused_optimizer<kArgsDepth>(
             tensor_lists,
             state_steps,
             FusedAdamMathFunctor(),
             lr,
             beta1,
             beta2,
-            weight_decay,
-            eps);
+            weight_decay);
       });
 }
 
-} // namespace bf16_fused_adam
+} // namespace adam_atan2

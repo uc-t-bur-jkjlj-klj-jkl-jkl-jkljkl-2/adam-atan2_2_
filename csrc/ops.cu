@@ -1,12 +1,12 @@
-#include "bf16_fused_adam.h"
+#include "adam_atan2.h"
 
 #include <torch/extension.h>
 
 
-namespace bf16_fused_adam {
+namespace adam_atan2 {
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("bf16_fused_adamw_cuda_impl_", &bf16_fused_adamw_cuda_impl_, "BFloat16 Fused AdamW Implementation");
+    m.def("adam_atan2_cuda_impl_", &adam_atan2w_cuda_impl_, "Adam-atan2 Fused Implementation");
 }
 
-}  // namespace bf16_fused_adam
+}  // namespace adam_atan2
