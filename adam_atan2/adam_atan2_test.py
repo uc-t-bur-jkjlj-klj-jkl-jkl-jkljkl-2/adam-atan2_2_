@@ -15,7 +15,6 @@ def _adam_atan2_reference_impl(
     # Constant
     step_size: float,
     wd_step_size: float,
-    bias_correction1_reciprocal: float,
     bias_correction2_sqrt: float,
     beta1: float,
     beta2: float
@@ -38,7 +37,7 @@ def _adam_atan2_reference_impl(
     exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
 
     denom = exp_avg_sq.sqrt() / bias_correction2_sqrt
-    param.add_(torch.atan2(bias_correction1_reciprocal * exp_avg, denom), alpha=-step_size)
+    param.add_(torch.atan2(exp_avg, denom), alpha=-step_size)
 
     return param.to(orig_dtype), exp_avg.to(orig_dtype), exp_avg_sq.to(orig_dtype)
 
@@ -82,9 +81,8 @@ def test_adam_atan2_backend(
             grad,
             ref_exp_avg,
             ref_exp_avg_sq,
-            step_size=lr,
+            step_size=lr / (1 - beta1 ** ref_steps),
             wd_step_size=lr * weight_decay,
-            bias_correction1_reciprocal=1 / (1 - beta1 ** ref_steps),
             bias_correction2_sqrt=math.sqrt(1 - beta2 ** ref_steps),
             beta1=beta1,
             beta2=beta2
