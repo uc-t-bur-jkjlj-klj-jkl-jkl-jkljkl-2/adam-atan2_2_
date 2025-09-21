@@ -1,0 +1,29 @@
+name: Build PyTorch Project with CUDA
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up CUDA 12.1
+      uses: nvidia/setup-cuda@v1
+      with:
+        version: '12.1'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install python3-dev python3-pip
+        pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
+
+    - name: Build the project
+      run: |
+        python setup.py install
